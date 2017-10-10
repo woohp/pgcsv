@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 import os
-import csv
 import sys
+import functools
+import csv
+import json
 import psycopg2
 import click
 
@@ -15,9 +17,11 @@ import click
               help='Username to connect to the postgres database.')
 @click.option('-d', '--dbname', default='', envvar='PGDATABASE',
               help='database name to connect to.')
+@click.option('--header', is_flag=True)
+@click.option('--format', default='csv', help='the format to output as: csv, json')
 @click.argument('database', default=lambda: None, envvar='PGDATABASE', nargs=1)
 @click.argument('username', default=lambda: None, envvar='PGUSER', nargs=1)
-def main(database, username_opt, host, port, dbname, username):
+def main(database, username_opt, host, port, header, format, dbname, username):
     password = os.environ.get('PGPASSWORD', '')
 
     conn = psycopg2.connect(host=host, port=port, user=username_opt, password=password, database=dbname)
@@ -27,12 +31,48 @@ def main(database, username_opt, host, port, dbname, username):
 
         c.execute(sql)
 
-        writer = csv.writer(sys.stdout)
-        while True:
-            row = c.fetchone()
-            if row is None:
-                break
-            writer.writerow(row)
+        if format == 'csv':
+            write_to_csv(c, header)
+        elif format == 'json':
+            write_to_json(c, header)
+
+
+def write_to_csv(c, header):
+    writer = csv.writer(sys.stdout)
+
+    if header:
+        writer.writerow([desc[0] for desc in c.description])
+
+    while True:
+        row = c.fetchone()
+        if row is None:
+            break
+        writer.writerow(row)
+
+
+dump_json = functools.partial(json.dumps, separators=(',',':'), default=repr)
+
+
+def write_to_json(c, header):
+    sys.stdout.write(b'[')
+
+    if header:
+        sys.stdout.write(dump_json([desc[0] for desc in c.description]))
+    else:
+        row = c.fetchone()
+        if row is None:
+            sys.stdout.write(b']')
+            return
+        sys.stdout.write(dump_json(row))
+
+    while True:
+        row = c.fetchone()
+        if row is None:
+            break
+        sys.stdout.write(b',')
+        sys.stdout.write(dump_json(row))
+
+    sys.stdout.write(b']')
 
 
 if __name__ == '__main__':
